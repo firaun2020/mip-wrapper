@@ -70,3 +70,6 @@ temp/
 
 # Claude development
 .claude/
+
+# Local integration test (contains credentials)
+test_it.py
