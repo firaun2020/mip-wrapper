@@ -74,10 +74,39 @@ class ProtocolResponse:
     def ensure_success(self) -> dict[str, Any]:
         """Raise if not successful."""
         if not self.success:
+            from mip_wrapper.exceptions import (
+                DecryptionError,
+                PermissionDeniedError,
+                UnsupportedFileTypeError,
+                UnsupportedProtectionError,
+                ProtocolError,
+                NativeRuntimeError,
+            )
+
             error = self.error or {}
             code = error.get("code", "UnknownError")
             message = error.get("message", "Unknown error")
-            raise ValueError(f"Helper error [{code}]: {message}")
+
+            # Map error codes to typed exceptions
+            error_map = {
+                "PermissionDenied": PermissionDeniedError,
+                "Unauthorized": PermissionDeniedError,
+                "UnsupportedFormat": UnsupportedFileTypeError,
+                "UnsupportedProtectionType": UnsupportedProtectionError,
+                "ProtocolError": ProtocolError,
+                "DecryptionError": DecryptionError,
+                "FileNotFound": DecryptionError,
+                "CertificateNotFound": NativeRuntimeError,
+                "CertificateLoadError": NativeRuntimeError,
+                "TokenAcquisitionError": NativeRuntimeError,
+            }
+
+            exception_class = error_map.get(code, NativeRuntimeError)
+            raise exception_class(
+                message,
+                error_code=code,
+                audit_metadata={"helper_error": code},
+            )
         return self.result or {}
 
 
