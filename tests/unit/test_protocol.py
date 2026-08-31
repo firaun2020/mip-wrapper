@@ -136,7 +136,9 @@ class TestProtocolResponse:
 
         response = ProtocolResponse.from_json(json_str)
 
-        with pytest.raises(ValueError, match="Helper error"):
+        from mip_wrapper.exceptions import DecryptionError
+
+        with pytest.raises(DecryptionError, match="Decryption failed"):
             response.ensure_success()
 
 
