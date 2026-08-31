@@ -82,3 +82,9 @@ class DestinationError(MipError):
     """Error uploading to destination."""
 
     pass
+
+
+class MissingRuntimeError(MipError):
+    """MipWrapper.Helper or required runtime not available."""
+
+    pass

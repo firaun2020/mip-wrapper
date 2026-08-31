@@ -1,14 +1,16 @@
-# Local Build and Test Instructions
+# Local Development: Build and Test Instructions
 
-This document explains how to build and test MIP Wrapper locally without a real Azure tenant or certificates.
+This document explains how to build and test MIP Wrapper locally as a Python developer would use it.
+
+MIP Wrapper is a Python library that requires a .NET helper component. For development, both components must be built and the helper must be discoverable.
 
 ## Prerequisites
 
 - Python 3.11+
-- .NET 6.0 SDK
+- .NET 6.0 SDK or later
 - Git
 
-## Local Setup
+## Quick Start
 
 ### 1. Create Python Virtual Environment
 

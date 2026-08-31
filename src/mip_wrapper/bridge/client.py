@@ -13,6 +13,7 @@ from mip_wrapper.bridge.protocol import (
     ProtocolRequest,
     ProtocolResponse,
 )
+from mip_wrapper.version import check_helper_version, check_protocol_version
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,12 @@ class HelperClient:
 
             logger.debug("Received response from helper")
             response = ProtocolResponse.from_json(response_json)
-            response.validate_version()
+
+            # Validate protocol version
+            try:
+                check_protocol_version(response.protocol_version)
+            except ValueError as e:
+                raise ProtocolError(str(e), error_code="ProtocolVersionMismatch") from e
 
             return response
 

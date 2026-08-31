@@ -9,6 +9,7 @@ from mip_wrapper.exceptions import (
     DestinationError,
     InvalidConfigurationError,
     MipError,
+    MissingRuntimeError,
     NativeRuntimeError,
     PermissionDeniedError,
     ProtocolError,
@@ -17,8 +18,9 @@ from mip_wrapper.exceptions import (
 )
 from mip_wrapper.auth import AuthBase, CertificateAuth, ClientSecretAuth
 from mip_wrapper.artifacts import DecryptedFile, FileInfo
+from mip_wrapper.version import PACKAGE_VERSION, PROTOCOL_VERSION
 
-__version__ = "0.1.0"
+__version__ = PACKAGE_VERSION
 
 __all__ = [
     "MipClient",
@@ -34,9 +36,12 @@ __all__ = [
     "DecryptionError",
     "CleanupError",
     "DestinationError",
+    "MissingRuntimeError",
     "AuthBase",
     "CertificateAuth",
     "ClientSecretAuth",
     "DecryptedFile",
     "FileInfo",
+    "PACKAGE_VERSION",
+    "PROTOCOL_VERSION",
 ]

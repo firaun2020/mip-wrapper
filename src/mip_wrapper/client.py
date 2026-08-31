@@ -1,6 +1,7 @@
 """Main MIP Wrapper client."""
 
 import logging
+import os
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -12,6 +13,7 @@ from mip_wrapper.auth import AuthBase, CertificateAuth
 from mip_wrapper.bridge.client import HelperClient
 from mip_wrapper.exceptions import (
     InvalidConfigurationError,
+    MissingRuntimeError,
     PermissionDeniedError,
 )
 
@@ -68,15 +70,49 @@ class MipClient:
             self.helper_path = self._find_helper()
 
         self.helper = HelperClient(self.helper_path, timeout_seconds)
+        self._version_checked = False
+
+    def _check_version_compatibility(self, helper_version: str) -> None:
+        """Check helper version compatibility on first use."""
+        if self._version_checked:
+            return
+
+        from mip_wrapper.version import check_helper_version
+
+        try:
+            check_helper_version(helper_version)
+            self._version_checked = True
+            logger.info(f"Helper version {helper_version} is compatible")
+        except ValueError as e:
+            raise InvalidConfigurationError(
+                str(e),
+                error_code="VersionMismatch",
+            ) from e
 
     def _find_helper(self) -> Path:
-        """Find MipWrapper.Helper executable."""
-        # Try common locations
+        """
+        Find MipWrapper.Helper executable using search order:
+        1. MIP_WRAPPER_HELPER_PATH environment variable
+        2. Current working directory
+        3. Package installation directory (future)
+        """
+        # 1. Check environment variable
+        env_path = os.environ.get("MIP_WRAPPER_HELPER_PATH")
+        if env_path:
+            path = Path(env_path)
+            if path.exists():
+                logger.debug(f"Found helper via MIP_WRAPPER_HELPER_PATH: {path}")
+                return path
+            logger.warning(f"MIP_WRAPPER_HELPER_PATH set but file not found: {env_path}")
+
+        # 2. Try common locations
         candidates = [
             Path.cwd() / "MipWrapper.Helper",
             Path.cwd() / "MipWrapper.Helper.exe",
-            Path(__file__).parent.parent.parent / "native" / "MipWrapper.Helper",
-            Path(__file__).parent.parent.parent / "native" / "MipWrapper.Helper.exe",
+            Path.cwd() / "helper-bin" / "MipWrapper.Helper",
+            Path.cwd() / "helper-bin" / "MipWrapper.Helper.exe",
+            Path(__file__).parent.parent.parent / "helper-bin" / "MipWrapper.Helper",
+            Path(__file__).parent.parent.parent / "helper-bin" / "MipWrapper.Helper.exe",
         ]
 
         for candidate in candidates:
@@ -84,9 +120,18 @@ class MipClient:
                 logger.debug(f"Found helper at: {candidate}")
                 return candidate
 
-        raise InvalidConfigurationError(
+        # 3. Provide clear error with instructions
+        raise MissingRuntimeError(
             "MipWrapper.Helper executable not found. "
-            "Specify helper_path parameter or ensure it's in PATH.",
+            "\n\nTo use mip_wrapper, you must:\n"
+            "1. Build the .NET helper:\n"
+            "   cd native/MipWrapper.Helper\n"
+            "   dotnet publish -c Release -o ../../helper-bin\n"
+            "\n2. Make it discoverable:\n"
+            "   - Set MIP_WRAPPER_HELPER_PATH=/path/to/MipWrapper.Helper\n"
+            "   - Or place in current directory or helper-bin/\n"
+            "   - Or pass helper_path parameter to MipClient()\n"
+            "\nSee BUILD_LOCALLY.md for detailed instructions.",
             error_code="HelperNotFound",
         )
 
@@ -112,6 +157,9 @@ class MipClient:
             delegated_user=self.delegated_user,
             source_path=source_path,
         )
+
+        # Check version compatibility on first use
+        self._check_version_compatibility(result.helper_version)
 
         return FileInfo(
             is_protected=result.is_protected,

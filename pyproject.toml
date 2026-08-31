@@ -23,7 +23,9 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
-dependencies = []
+dependencies = [
+    "packaging>=21.0",
+]
 
 [project.urls]
 Repository = "https://github.com/example/mip-wrapper"
