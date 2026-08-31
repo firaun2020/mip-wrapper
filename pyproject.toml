@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mip-wrapper"
+version = "0.1.0"
+description = "Unofficial Python wrapper for Microsoft Information Protection file decryption"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "Developer"}]
+keywords = ["mip", "information-protection", "azure-rights-management", "decryption"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+]
+
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/example/mip-wrapper"
+Documentation = "https://github.com/example/mip-wrapper/blob/main/docs"
+Issues = "https://github.com/example/mip-wrapper/issues"
+
+[tool.setuptools]
+packages = ["mip_wrapper", "mip_wrapper.bridge"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+mip_wrapper = ["py.typed"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
