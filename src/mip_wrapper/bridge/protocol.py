@@ -23,7 +23,8 @@ class ProtocolRequest:
     delegated_user: str | None = None
     source_path: str | None = None
     output_path: str | None = None
-    timeout_seconds: int = 30
+    timeout_seconds: int = 120
+    client_secret: str | None = None
 
     def to_json(self) -> str:
         """Serialize to JSON."""

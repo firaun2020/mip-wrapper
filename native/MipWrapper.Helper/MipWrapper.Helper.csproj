@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net6.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <TrimMode>partial</TrimMode>
@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.InformationProtection.File" Version="1.18.124" />
-    <PackageReference Include="Microsoft.Identity.Client" Version="4.61.0" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.88.0" />
   </ItemGroup>
 
 </Project>

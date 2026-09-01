@@ -9,12 +9,12 @@ from pathlib import Path
 from typing import Generator
 
 from mip_wrapper.artifacts import DecryptedFile, FileInfo
-from mip_wrapper.auth import AuthBase, CertificateAuth
+from mip_wrapper.auth import AuthBase, CertificateAuth, ClientSecretAuth
 from mip_wrapper.bridge.client import HelperClient
 from mip_wrapper.exceptions import (
+    CleanupError,
     InvalidConfigurationError,
     MissingRuntimeError,
-    PermissionDeniedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class MipClient:
         delegated_user: str | None = None,
         helper_path: str | None = None,
         correlation_id: str | None = None,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 120,
     ) -> None:
         """
         Initialize MipClient.
@@ -45,7 +45,7 @@ class MipClient:
         """
         auth.validate()
 
-        if authorization_mode not in ("delegated_reader", "super_user"):
+        if authorization_mode != "delegated_reader":
             raise InvalidConfigurationError(
                 f"Invalid authorization_mode: {authorization_mode}",
                 error_code="InvalidAuthMode",
@@ -147,6 +147,11 @@ class MipClient:
         """
         logger.info(f"Inspecting file: {source_path}")
 
+        # Get client secret if using ClientSecretAuth
+        client_secret = None
+        if isinstance(self.auth, ClientSecretAuth):
+            client_secret = self.auth.secret_provider()
+
         result = self.helper.inspect(
             tenant_id=self.auth.tenant_id,
             client_id=self.auth.client_id,
@@ -156,6 +161,7 @@ class MipClient:
             authorization_mode=self.authorization_mode,
             delegated_user=self.delegated_user,
             source_path=source_path,
+            client_secret=client_secret,
         )
 
         # Check version compatibility on first use
@@ -204,6 +210,12 @@ class MipClient:
 
             # Decrypt
             logger.info(f"Decrypting to temp: {source_path}")
+
+            # Get client secret if using ClientSecretAuth
+            client_secret = None
+            if isinstance(self.auth, ClientSecretAuth):
+                client_secret = self.auth.secret_provider()
+
             result = self.helper.decrypt(
                 tenant_id=self.auth.tenant_id,
                 client_id=self.auth.client_id,
@@ -214,6 +226,7 @@ class MipClient:
                 delegated_user=self.delegated_user,
                 source_path=source_path,
                 output_path=output_path,
+                client_secret=client_secret,
             )
 
             # Yield artifact
@@ -241,4 +254,7 @@ class MipClient:
                     shutil.rmtree(temp_dir)
                     logger.debug(f"Cleaned up temp directory: {temp_dir}")
                 except Exception as cleanup_error:
-                    logger.warning(f"Cleanup failed: {cleanup_error}")
+                    raise CleanupError(
+                        f"Failed to remove temporary plaintext directory: {temp_dir}",
+                        error_code="CleanupFailed",
+                    ) from cleanup_error

@@ -8,15 +8,13 @@ version = "0.1.0"
 description = "Unofficial Python wrapper for Microsoft Information Protection file decryption"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
-authors = [{name = "Developer"}]
+license = "MIT"
 keywords = ["mip", "information-protection", "azure-rights-management", "decryption"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Natural Language :: English",
-    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,9 +26,9 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/example/mip-wrapper"
-Documentation = "https://github.com/example/mip-wrapper/blob/main/docs"
-Issues = "https://github.com/example/mip-wrapper/issues"
+Repository = "https://github.com/firaun2020/mip-wrapper"
+Documentation = "https://github.com/firaun2020/mip-wrapper/tree/main/docs"
+Issues = "https://github.com/firaun2020/mip-wrapper/issues"
 
 [tool.setuptools]
 packages = ["mip_wrapper", "mip_wrapper.bridge"]

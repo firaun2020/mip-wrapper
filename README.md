@@ -1,314 +1,80 @@
-# MIP Wrapper
+# mip-wrapper
 
-Unofficial Python wrapper for Microsoft Information Protection (MIP) file decryption and inspection.
+Unofficial Python wrapper for inspecting and decrypting files protected by Microsoft Purview Information Protection. The Python package starts a local JSON subprocess bridge to a separately built .NET helper, which calls the Microsoft Information Protection File SDK.
 
-**Status:** Alpha (v0.1.0) – Internal development use only
+## Scope
 
-```python
-from mip_wrapper import MipClient
-from mip_wrapper.auth import CertificateAuth
+- Windows x64 only
+- Python 3.11 or newer
+- `delegated_reader` is the only supported authorization mode
+- Unattended client-secret authentication via MSAL
+- Local file inspection and temporary decryption
+- No DRM bypass: the delegated user must have the required document usage right
 
-# Configure authentication
-auth = CertificateAuth(
-    tenant_id="your-tenant-id",
-    client_id="your-app-id",
-    certificate_path="path/to/certificate.pfx",
-    certificate_password_path="path/to/cert.password",
-)
-
-# Create client with delegated-reader authorization
-client = MipClient(
-    auth=auth,
-    authorization_mode="delegated_reader",
-    delegated_user="service-account@company.com",
-)
-
-# Inspect protected file
-info = client.inspect("protected.xlsx")
-print(f"Protected: {info.is_protected}, Label: {info.label_id}")
-
-# Decrypt temporarily
-with client.decrypted_file("protected.xlsx") as artifact:
-    # artifact.path points to decrypted file in secure temp location
-    import openpyxl
-    wb = openpyxl.load_workbook(artifact.path)
-    # Process workbook...
-    # Temp file is automatically deleted when context exits
-```
-
-## What It Does
-
-- **Inspects** Microsoft Purview-protected files to retrieve metadata (label, tenant, format, usage rights)
-- **Decrypts** files protected by Azure Rights Management when the user has Export rights
-- **Manages** secure temporary files with automatic cleanup
-- **Enforces** usage rights before allowing decryption
-- **Provides** typed exceptions for clear error handling
-- **Works** with Python application code, not as a standalone service
-
-## What It Does NOT Do
-
-- ❌ Reverse-engineer or reimplement Azure RMS encryption
-- ❌ Bypass document rights or DRM protections
-- ❌ Act as a network-accessible decryption service
-- ❌ Store credentials in project configuration
-- ❌ Automatically download or manage native binaries
-- ❌ Support password-protected Office files (separate from MIP)
-- ❌ Support HYOK (hybrid on-premises) scenarios yet
-- ❌ Support super-user mode in v0.1 (planned for v1.1+)
-
-## How It Works
-
-```
-Your Python Code
-    ↓
-mip_wrapper (Python package)
-    ↓ (JSON protocol)
-MipWrapper.Helper (.NET console app)
-    ↓
-Official Microsoft MIP SDK
-    ↓
-Azure Rights Management Service
-```
-
-The Python package handles configuration, validation, and file operations. The .NET helper bridges to the official Microsoft MIP SDK, which performs actual decryption using Azure Rights Management.
+The package does not bundle the .NET helper or Microsoft MIP SDK binaries. Build and install the helper separately, and ensure its Microsoft SDK licensing and redistribution terms are satisfied for your environment.
 
 ## Installation
 
-```bash
-# Development installation
-pip install -e .
-
-# Build the .NET helper
-cd native/MipWrapper.Helper
-dotnet publish -c Release -o ../../helper-bin
-cd ../..
-
-# Make helper discoverable
-export MIP_WRAPPER_HELPER_PATH=$(pwd)/helper-bin/MipWrapper.Helper
-# On Windows: set MIP_WRAPPER_HELPER_PATH=%cd%\helper-bin\MipWrapper.Helper
+```powershell
+python -m pip install mip-wrapper
+dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj -c Release -o helper-bin
+$env:MIP_WRAPPER_HELPER_PATH = (Resolve-Path helper-bin/MipWrapper.Helper.exe)
 ```
 
-## Helper Discovery
+The helper requires the .NET runtime targeted by the project and the native Microsoft MIP SDK runtime available to it. `MIP_WRAPPER_HELPER_PATH` may point to the published helper executable. The source repository's `helper-bin/` directory is a local build output and is not part of the Python distribution.
 
-The Python package locates the .NET helper using this search order:
-
-1. **Explicit `helper_path` parameter** to `MipClient(...)`
-2. **`MIP_WRAPPER_HELPER_PATH` environment variable**
-3. **Current directory** or `helper-bin/` subdirectory
-4. **Package installation location** (future: when bundled)
-
-If the helper is not found, a `MissingRuntimeError` provides clear setup instructions.
-
-## Authentication
-
-### Certificate-Based (Recommended)
+## Usage
 
 ```python
-from mip_wrapper.auth import CertificateAuth
-
-auth = CertificateAuth(
-    tenant_id="00000000-0000-0000-0000-000000000000",
-    client_id="11111111-1111-1111-1111-111111111111",
-    certificate_path="/secure/cert.pfx",
-    certificate_password_path="/secure/cert.password",
-)
-```
-
-Certificates must be stored securely:
-- **File permissions:** 0o600 (owner-read-only)
-- **Not in version control:** Add to `.gitignore`
-- **Not in container images:** Mount at runtime
-
-### Client Secret (Less Secure)
-
-```python
+import os
+from mip_wrapper import MipClient
 from mip_wrapper.auth import ClientSecretAuth
 
-def get_secret():
-    return os.environ.get("CLIENT_SECRET")
-
 auth = ClientSecretAuth(
-    tenant_id="...",
-    client_id="...",
-    secret_provider=get_secret,
+    tenant_id=os.environ["MIP_TENANT_ID"],
+    client_id=os.environ["MIP_CLIENT_ID"],
+    secret_provider=lambda: os.environ["MIP_CLIENT_SECRET"],
 )
-```
 
-Document recommends certificate authentication for production.
-
-## Authorization Modes
-
-### Delegated Reader (Default)
-
-```python
 client = MipClient(
     auth=auth,
     authorization_mode="delegated_reader",
-    delegated_user="alice@company.com",
+    delegated_user="reader@contoso.com",
 )
-```
 
-Decrypts files on behalf of the delegated user. The user must have Export rights to each file.
-
-**Requires:**
-- Azure AD app permission: `Content.DelegatedReader`
-- Delegated user's usage rights on specific files
-
-## Core API
-
-### Inspect Files
-
-```python
 info = client.inspect("protected.xlsx")
-# Returns: FileInfo with metadata (label, format, rights, etc.)
+print(info.is_protected, info.usage_rights)
+
+with client.decrypted_file("protected.xlsx") as file:
+    process(file.path)
 ```
 
-### Temporary Decryption
+The context manager creates a temporary directory, returns the committed plaintext path, and removes the directory on normal exit and exceptions. A cleanup failure raises `CleanupError`. The original protected file is not used as the output path.
 
-```python
-with client.decrypted_file("protected.xlsx") as artifact:
-    print(artifact.path)  # pathlib.Path to decrypted file
-    # Use with openpyxl, pandas, etc.
-    # Automatic cleanup when context exits
+## Entra and document authorization
+
+The app registration must be configured for the Microsoft Information Protection resource and granted the application permission required by the MIP SDK's delegated-reader flow, documented by Microsoft as `Content.DelegatedReader`, with tenant-admin consent. `delegated_reader` is package configuration terminology, not an Entra permission. The delegated user must independently have `Export` or `Owner` usage rights on the protected file; neither the package mode nor the app permission grants document access by itself.
+
+The helper acquires app-only tokens with `AcquireTokenForClient`, using the tenant supplied by the request and the MIP SDK challenge resource as `{resource}/.default`. It does not perform an interactive delegated-user sign-in.
+
+## Security and operational limits
+
+- Do not put client secrets in source code, command-line arguments, logs, or protocol diagnostics. Supply them through a secret provider such as an environment-backed secret store.
+- Protected file contents are written temporarily in plaintext while inside the context manager. Restrict host access and process only authorized content.
+- The helper protocol is local and line-delimited JSON; it is not an authenticated network service.
+- The package does not download, install, or update the helper or Microsoft SDK runtime.
+- Real tenant credentials and protected files are required for integration testing. Unit tests use fake helper processes and do not prove tenant authorization or MIP service connectivity.
+
+## Development
+
+```powershell
+python -m pip install -e .
+python -m pytest
+dotnet build native/MipWrapper.Helper/MipWrapper.Helper.csproj -c Release
 ```
 
-Raises:
-- `PermissionDeniedError` – user lacks Export right
-- `UnsupportedFileTypeError` – unsupported format
-- `UnsupportedProtectionError` – unsupported protection type
-
-### Explicit Decryption
-
-```python
-result = client.decrypt(
-    source="protected.xlsx",
-    output="decrypted.xlsx",
-    allow_unprotected_output=True,
-)
-```
-
-Requires explicit acknowledgement that output is unprotected.
-
-## Exceptions
-
-```python
-from mip_wrapper import (
-    MipError,
-    AuthenticationError,
-    PermissionDeniedError,
-    UnsupportedProtectionError,
-    UnsupportedFileTypeError,
-    InvalidConfigurationError,
-    MissingRuntimeError,
-)
-```
-
-All exceptions are typed and include:
-- `message` – Human-readable description
-- `error_code` – Machine-readable identifier
-- `audit_metadata` – Safe contextual information
-
-## Testing
-
-### Unit Tests (No Tenant Required)
-
-```bash
-pip install pytest
-pytest tests/unit/ -v
-```
-
-23+ unit tests mock the .NET helper and don't require:
-- Azure credentials
-- Real certificates
-- Real protected files
-
-### Integration Tests (Tenant Required)
-
-See `INTEGRATION_TESTS.md` (not yet available in v0.1).
-
-Integration tests run against a real Azure tenant with:
-- MIP protection enabled
-- Test protected Excel file
-- App registration with certificate
-- Appropriate Azure AD permissions
-
-## Version Compatibility
-
-The package validates:
-- **Python version** – 3.11+
-- **Protocol version** – v1.0 (between Python and helper)
-- **Helper version** – 1.0.0+ (semantic versioning)
-
-Version mismatches raise `InvalidConfigurationError` with clear remediation steps.
-
-## Project Status
-
-**v0.1.0 (Internal Alpha)**
-- ✅ Certificate authentication
-- ✅ Delegated-reader mode
-- ✅ File inspection
-- ✅ Temporary decryption with automatic cleanup
-- ✅ Typed exceptions
-- ✅ Unit tests
-
-**v0.2.0 (Planned)**
-- Hardened error handling
-- Redacted logging
-- Extended test coverage
-- Documentation updates
-
-**v0.3.0 (Planned)**
-- Azure Data Lake destination support
-- Blob Storage destination support
-- Processing pipeline API
-
-**v1.0.0 (Planned)**
-- After Microsoft confirms IPIA and redistribution requirements
-- Possible binary bundling in wheels
-- Stable public API
-
-## Platform Support
-
-**Tested:**
-- Python 3.11+ on Windows and Linux
-- .NET 6.0 SDK
-
-**Untested:**
-- macOS (architecture in place, needs testing)
-- Python 3.10 or older (may work, not officially supported)
-
-## Legal and Licensing
-
-**This is an unofficial community project**, not developed, maintained, or endorsed by Microsoft.
-
-- **MIP Wrapper license:** MIT
-- **Microsoft MIP SDK:** Licensed by Microsoft under their terms
-- **Public distribution:** Requires Information Protection Integration Agreement (IPIA) with Microsoft
-
-See `docs/distribution-and-licensing.md` for details.
-
-## Documentation
-
-- [`docs/architecture.md`](docs/architecture.md) – Design and component responsibilities
-- [`docs/threat-model.md`](docs/threat-model.md) – Security analysis
-- [`docs/helper-protocol.md`](docs/helper-protocol.md) – JSON protocol v1.0
-- [`BUILD_LOCALLY.md`](BUILD_LOCALLY.md) – Development setup
-
-## Getting Help
-
-- **Setup issues:** Check `BUILD_LOCALLY.md` and ensure helper is built
-- **Authentication:** Verify certificate path and permissions
-- **Decryption errors:** Confirm user has Export rights in Azure AD
-- **Missing helper:** Set `MIP_WRAPPER_HELPER_PATH` or build with `dotnet publish`
-
-## Contributing
-
-This is an internal development project. Public contributions will be considered after v1.0 release.
+See [`BUILD_LOCALLY.md`](BUILD_LOCALLY.md) for the local helper workflow. See [`docs/distribution-and-licensing.md`](docs/distribution-and-licensing.md) for the unresolved Microsoft SDK distribution and licensing questions. This project is not affiliated with or endorsed by Microsoft.
 
 ## License
 
-MIT – See LICENSE file
-
----
-
-**⚠️ Important:** This is a community wrapper around the official Microsoft MIP SDK. Microsoft provides the actual file protection and decryption. Verify all cryptographic and legal requirements with Microsoft directly.
+The wrapper source is MIT licensed. The Microsoft Information Protection SDK and its native runtime are separately licensed by Microsoft; this repository does not grant rights to redistribute them.

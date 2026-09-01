@@ -2,7 +2,10 @@
 
 import json
 import logging
+import queue
 import subprocess
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +24,7 @@ logger = logging.getLogger(__name__)
 class HelperClient:
     """Manages the .NET MipWrapper.Helper process."""
 
-    def __init__(self, helper_path: Path, timeout_seconds: int = 30) -> None:
+    def __init__(self, helper_path: Path, timeout_seconds: int = 120) -> None:
         """
         Initialize helper client.
 
@@ -32,7 +35,29 @@ class HelperClient:
         self.helper_path = helper_path
         self.timeout_seconds = timeout_seconds
         self._process: subprocess.Popen[str] | None = None
+        self._stdout_queue: queue.Queue[str | None] | None = None
         logger.debug(f"HelperClient initialized: {helper_path}")
+
+    def _read_stdout(self, process: subprocess.Popen[str], output: queue.Queue[str | None]) -> None:
+        if process.stdout is None:
+            output.put(None)
+            return
+        try:
+            for line in iter(process.stdout.readline, ""):
+                if not isinstance(line, str):
+                    break
+                output.put(line)
+        finally:
+            output.put(None)
+
+    def _drain_stderr(self, process: subprocess.Popen[str]) -> None:
+        if process.stderr is None:
+            return
+        for line in iter(process.stderr.readline, ""):
+            if not isinstance(line, str):
+                break
+            sys.stderr.write(line)
+            sys.stderr.flush()
 
     def _spawn_helper(self) -> subprocess.Popen[str]:
         """Spawn helper process if not already running."""
@@ -48,6 +73,9 @@ class HelperClient:
                 text=True,
                 bufsize=1,
             )
+            self._stdout_queue = queue.Queue()
+            threading.Thread(target=self._read_stdout, args=(self._process, self._stdout_queue), daemon=True).start()
+            threading.Thread(target=self._drain_stderr, args=(self._process,), daemon=True).start()
             logger.debug("Helper process spawned")
         except FileNotFoundError as e:
             raise NativeRuntimeError(
@@ -61,6 +89,38 @@ class HelperClient:
             ) from e
 
         return self._process
+
+    def _terminate_helper(self) -> None:
+        process = self._process
+        self._process = None
+        self._stdout_queue = None
+        if process is None:
+            return
+
+        try:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+
+            try:
+                process.wait(timeout=2)
+            except Exception:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                try:
+                    process.wait(timeout=2)
+                except Exception:
+                    pass
+        finally:
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except Exception:
+                        pass
 
     def _send_request(self, request: ProtocolRequest) -> ProtocolResponse:
         """Send request to helper and get response."""
@@ -78,7 +138,30 @@ class HelperClient:
             process.stdin.write(request_json + "\n")
             process.stdin.flush()
 
-            response_json = process.stdout.readline()
+            if self._stdout_queue is None:
+                raise NativeRuntimeError(
+                    "Helper stdout reader is not available",
+                    error_code="HelperPipeFailed",
+                )
+
+            try:
+                response_json = self._stdout_queue.get(
+                    timeout=request.timeout_seconds or self.timeout_seconds
+                )
+            except queue.Empty as error:
+                self._terminate_helper()
+                raise NativeRuntimeError(
+                    f"Helper operation timed out: {request.command}",
+                    error_code="HelperTimeout",
+                ) from error
+
+            if response_json is None:
+                self._terminate_helper()
+                raise ProtocolError(
+                    f"Helper exited before responding to {request.command}",
+                    error_code="HelperTerminated",
+                )
+
             if not response_json:
                 raise ProtocolError(
                     "Helper process terminated without response",
@@ -111,6 +194,7 @@ class HelperClient:
         delegated_user: str | None,
         source_path: str,
         timeout_seconds: int | None = None,
+        client_secret: str | None = None,
     ) -> InspectResult:
         """
         Inspect file protection metadata.
@@ -127,6 +211,7 @@ class HelperClient:
             delegated_user=delegated_user,
             source_path=source_path,
             timeout_seconds=timeout_seconds or self.timeout_seconds,
+            client_secret=client_secret,
         )
 
         response = self._send_request(request)
@@ -143,6 +228,7 @@ class HelperClient:
         source_path: str,
         output_path: str,
         timeout_seconds: int | None = None,
+        client_secret: str | None = None,
     ) -> DecryptResult:
         """
         Decrypt file to output path.
@@ -160,6 +246,7 @@ class HelperClient:
             source_path=source_path,
             output_path=output_path,
             timeout_seconds=timeout_seconds or self.timeout_seconds,
+            client_secret=client_secret,
         )
 
         response = self._send_request(request)
@@ -177,12 +264,7 @@ class HelperClient:
         except Exception as e:
             logger.warning(f"Shutdown request failed: {e}")
         finally:
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._process = None
+            self._terminate_helper()
 
     def __del__(self) -> None:
         """Cleanup on deletion."""

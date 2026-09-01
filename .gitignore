@@ -30,6 +30,7 @@ env/
 
 # Testing
 .pytest_cache/
+.pytest-run*/
 .coverage
 htmlcov/
 .tox/
@@ -68,8 +69,10 @@ tmp/
 temp/
 *.tmp
 
-# Claude development
 .claude/
+.codex/
+CLAUDE.md
+AGENTS.md
 
 # Local integration test (contains credentials)
 test_it.py
