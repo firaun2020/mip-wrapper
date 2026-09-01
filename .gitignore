@@ -73,3 +73,8 @@ temp/
 
 # Local integration test (contains credentials)
 test_it.py
+
+# Helper build artifacts
+helper-bin/
+helper-bin-test/
+check_original.py
