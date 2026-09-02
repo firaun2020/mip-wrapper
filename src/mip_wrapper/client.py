@@ -22,6 +22,22 @@ from mip_wrapper.exceptions import (
 logger = logging.getLogger(__name__)
 
 
+def _read_os_release() -> dict[str, str]:
+    """Read Linux distribution metadata used by packaged-runtime discovery."""
+    os_release = Path("/etc/os-release")
+    values: dict[str, str] = {}
+    if os_release.exists():
+        for line in os_release.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value.strip().strip('"')
+    return values
+
+
+def _is_executable(path: Path) -> bool:
+    return bool(path.stat().st_mode & 0o111)
+
+
 class MipClient:
     """Client for MIP file operations."""
 
@@ -102,10 +118,14 @@ class MipClient:
         env_path = os.environ.get("MIP_WRAPPER_HELPER_PATH")
         if env_path:
             path = Path(env_path)
-            if path.exists():
+            if path.is_file():
                 logger.debug(f"Found helper via MIP_WRAPPER_HELPER_PATH: {path}")
                 return path
-            logger.warning(f"MIP_WRAPPER_HELPER_PATH set but file not found: {env_path}")
+            raise MissingRuntimeError(
+                "MIP_WRAPPER_HELPER_PATH points to a missing helper: "
+                f"{env_path}",
+                error_code="HelperNotFound",
+            )
 
         # 2. Prefer the helper bundled in a platform-specific wheel.
         packaged_helper = self._find_packaged_helper()
@@ -154,13 +174,7 @@ class MipClient:
                     error_code="UnsupportedPlatform",
                 )
 
-            os_release = Path("/etc/os-release")
-            values = {}
-            if os_release.exists():
-                for line in os_release.read_text(encoding="utf-8").splitlines():
-                    if "=" in line:
-                        key, value = line.split("=", 1)
-                        values[key] = value.strip().strip('"')
+            values = _read_os_release()
             if values.get("ID") != "ubuntu" or values.get("VERSION_ID") != "22.04":
                 raise MissingRuntimeError(
                     "mip-wrapper supports only Ubuntu 22.04 x64 on Linux",
@@ -208,7 +222,7 @@ class MipClient:
                 error_code="IncompleteRuntime",
             )
 
-        if runtime_name != "win-x64" and not helper_path.stat().st_mode & 0o111:
+        if runtime_name != "win-x64" and not _is_executable(helper_path):
             raise MissingRuntimeError(
                 "Packaged Ubuntu helper is not executable",
                 error_code="IncompleteRuntime",

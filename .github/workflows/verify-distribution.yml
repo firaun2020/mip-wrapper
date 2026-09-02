@@ -37,6 +37,7 @@ jobs:
           try {
             $env:MIP_WRAPPER_EXPECT_PACKAGED_RUNTIME = "1"
             & $python -c "import mip_wrapper; print('version=', mip_wrapper.__version__); from mip_wrapper import MipClient; c=object.__new__(MipClient); print('helper=', c._find_packaged_helper())"
+            & $python -c "from importlib import resources; from mip_wrapper import MipClient; r=resources.files('mip_wrapper').joinpath('_runtime','win-x64'); names=('LicenseTerms.rtf','redist.txt','ThirdPartyNotice.txt','Microsoft.InformationProtection.File.nuspec','DOTNET_LICENSE.txt','DOTNET_ThirdPartyNotices.txt'); assert all(r.joinpath(n).is_file() for n in names); print('license files: valid')"
             $helper = & $python -c "from mip_wrapper import MipClient; print(object.__new__(MipClient)._find_packaged_helper())"
             Write-Host "installed helper path: $helper"
             Get-FileHash $helper -Algorithm SHA256
@@ -97,6 +98,12 @@ jobs:
           print('helper=', helper)
           assert Path(helper).is_file()
           assert os.access(helper, os.X_OK)
+          runtime = Path(helper).parent
+          for name in ('MIP_Ubuntu2204_MIT_LICENSE.txt', 'MIP_Ubuntu2204_Redistribution.txt', 'microsoft.informationprotection.file.ubuntu2204.nuspec', 'DOTNET_LICENSE.txt', 'DOTNET_ThirdPartyNotices.txt'):
+              assert (runtime / name).is_file(), name
+          for name in ('LicenseTerms.rtf', 'redist.txt', 'ThirdPartyNotice.txt'):
+              assert not (runtime / name).exists(), name
+          print('license files: valid')
 
           process = subprocess.Popen([str(helper)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
           try:

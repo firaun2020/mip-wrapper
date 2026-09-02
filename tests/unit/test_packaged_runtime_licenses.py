@@ -1,21 +1,10 @@
 """Checks licensing files in an installed platform wheel."""
 
-import os
 import platform
 from importlib import resources
 
-import pytest
-
-
-pytestmark = pytest.mark.skipif(
-    os.environ.get("MIP_WRAPPER_EXPECT_PACKAGED_RUNTIME") != "1",
-    reason="requires an installed platform wheel",
-)
-
-
-def test_bundled_runtime_license_files_exist():
+def test_bundled_runtime_license_file_names_are_platform_specific(tmp_path, monkeypatch):
     runtime_name = "win-x64" if platform.system() == "Windows" else "ubuntu-22.04-x64"
-    runtime = resources.files("mip_wrapper").joinpath("_runtime", runtime_name)
     names = (
         (
             "LicenseTerms.rtf",
@@ -30,10 +19,18 @@ def test_bundled_runtime_license_files_exist():
             "Microsoft.InformationProtection.File.Ubuntu2204.nuspec",
         )
     )
+    runtime = tmp_path / "_runtime" / runtime_name
+    runtime.mkdir(parents=True)
     for name in names + ("DOTNET_LICENSE.txt", "DOTNET_ThirdPartyNotices.txt"):
-        assert runtime.joinpath(name).is_file(), name
+        runtime.joinpath(name).touch()
+    monkeypatch.setattr(
+        "mip_wrapper.client.resources.files", lambda package: tmp_path
+    )
+    packaged = resources.files("mip_wrapper").joinpath("_runtime", runtime_name)
+    for name in names + ("DOTNET_LICENSE.txt", "DOTNET_ThirdPartyNotices.txt"):
+        assert packaged.joinpath(name).is_file(), name
 
     if runtime_name == "ubuntu-22.04-x64":
-        assert not runtime.joinpath("LicenseTerms.rtf").exists()
-        assert not runtime.joinpath("redist.txt").exists()
-        assert not runtime.joinpath("ThirdPartyNotice.txt").exists()
+        assert not packaged.joinpath("LicenseTerms.rtf").exists()
+        assert not packaged.joinpath("redist.txt").exists()
+        assert not packaged.joinpath("ThirdPartyNotice.txt").exists()
