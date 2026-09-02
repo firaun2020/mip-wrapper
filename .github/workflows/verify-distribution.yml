@@ -65,6 +65,8 @@ jobs:
         run: |
           set -o pipefail
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64 2>&1 | tee dotnet-publish.log
+          echo 'Ubuntu2204 NuGet package contents:'
+          find "$HOME/.nuget/packages/microsoft.informationprotection.file.ubuntu2204/1.18.124" -type f -printf '%P\n' | sort
           echo 'NU1701 conclusion: Microsoft.InformationProtection.File.Ubuntu2204 exposes lib/dotnet assets but no net10.0 target; the warning is retained and not suppressed.'
           python -m pip install --upgrade build setuptools wheel
           chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
