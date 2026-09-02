@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mip-wrapper"
-version = "0.1.0"
+version = "0.2.0"
 description = "Unofficial Python wrapper for Microsoft Information Protection file decryption"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,7 +35,7 @@ packages = ["mip_wrapper", "mip_wrapper.bridge"]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-mip_wrapper = ["py.typed"]
+mip_wrapper = ["py.typed", "_runtime/**/*"]
 
 [tool.mypy]
 python_version = "3.11"

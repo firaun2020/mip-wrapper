@@ -9,22 +9,56 @@ permissions:
   id-token: write
 
 jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build Windows wheel
+        shell: pwsh
+        run: |
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime win-x64 --self-contained true --output runtime/win-x64
+          python -m pip install --upgrade build setuptools wheel
+          python tools/build_distribution.py --platform win-x64 --runtime-dir runtime/win-x64 --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-windows
+          path: dist/*.whl
+
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build Ubuntu wheel
+        run: |
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64
+          python -m pip install --upgrade build setuptools wheel
+          chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
+          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-ubuntu
+          path: dist/*.whl
+
   publish:
+    needs: [build-windows, build-ubuntu]
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.13"
-
-      - name: Build distributions
-        run: |
-          python -m pip install --upgrade build
-          python -m build
-
-      - name: Publish distributions
-        uses: pypa/gh-action-pypi-publish@release/v1
+          pattern: mip-wrapper-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

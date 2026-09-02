@@ -69,3 +69,47 @@ class TestHelperDiscovery:
 
         # Should have warning about env var pointing to nonexistent file
         assert any("MIP_WRAPPER_HELPER_PATH" in record.message for record in caplog.records)
+
+    def test_packaged_windows_helper_is_discovered_from_isolated_runtime(
+        self, test_auth, monkeypatch, tmp_path
+    ):
+        """Packaged discovery must use its own runtime, not repository helper-bin."""
+        runtime = tmp_path / "_runtime" / "win-x64"
+        (runtime / "x64").mkdir(parents=True)
+        (runtime / "MipWrapper.Helper.exe").write_bytes(b"fake executable")
+        (runtime / "x64" / "mip_file_sdk.dll").write_bytes(b"fake native")
+        (runtime / "Microsoft.InformationProtection.dll").write_bytes(b"fake managed")
+
+        monkeypatch.delenv("MIP_WRAPPER_HELPER_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("mip_wrapper.client.platform.system", lambda: "Windows")
+        monkeypatch.setattr(
+            "mip_wrapper.client.resources.files", lambda package: tmp_path
+        )
+
+        client = MipClient(
+            auth=test_auth,
+            authorization_mode="delegated_reader",
+            delegated_user="user@example.com",
+        )
+
+        assert client.helper_path == runtime / "MipWrapper.Helper.exe"
+
+    def test_packaged_linux_helper_requires_ubuntu_2204_x64(
+        self, test_auth, monkeypatch, tmp_path
+    ):
+        monkeypatch.delenv("MIP_WRAPPER_HELPER_PATH", raising=False)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("mip_wrapper.client.platform.system", lambda: "Linux")
+        monkeypatch.setattr("mip_wrapper.client.platform.machine", lambda: "x86_64")
+        monkeypatch.setattr(
+            "mip_wrapper.client.Path.read_text",
+            lambda path, encoding="utf-8": 'ID=ubuntu\nVERSION_ID="22.04"\n',
+        )
+
+        with pytest.raises(MissingRuntimeError, match="Ubuntu 22.04"):
+            MipClient(
+                auth=test_auth,
+                authorization_mode="delegated_reader",
+                delegated_user="user@example.com",
+            )

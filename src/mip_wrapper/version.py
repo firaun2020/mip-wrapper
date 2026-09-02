@@ -3,7 +3,7 @@
 from packaging import version as pkg_version
 
 # Package version
-PACKAGE_VERSION = "0.1.0"
+PACKAGE_VERSION = "0.2.0"
 
 # Supported protocol version
 PROTOCOL_VERSION = "1.0"

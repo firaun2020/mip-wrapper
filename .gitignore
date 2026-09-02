@@ -73,6 +73,7 @@ temp/
 .codex/
 CLAUDE.md
 AGENTS.md
+BUILD_LOCALLY.md
 
 # Local integration test (contains credentials)
 test_it.py
