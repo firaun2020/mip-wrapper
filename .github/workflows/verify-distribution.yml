@@ -24,6 +24,8 @@ jobs:
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime win-x64 --self-contained true --output runtime/win-x64
           python -m pip install --upgrade build setuptools wheel
           python tools/build_distribution.py --platform win-x64 --runtime-dir runtime/win-x64 --output-dir dist
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          python tools\verify_wheel.py $wheel py3-none-win_amd64
       - name: Clean install and protocol smoke test
         shell: pwsh
         run: |
@@ -72,6 +74,8 @@ jobs:
           python -m pip install --upgrade build setuptools wheel
           chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
           python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist
+          wheel=$(find dist -name '*.whl' -print -quit)
+          python tools/verify_wheel.py "$wheel" py3-none-manylinux_2_35_x86_64
       - name: Clean install and helper smoke test
         run: |
           set -euo pipefail

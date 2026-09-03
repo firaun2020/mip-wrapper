@@ -1,7 +1,14 @@
 import os
 
-from setuptools import setup
+from setuptools import Distribution, setup
 from wheel.bdist_wheel import bdist_wheel
+
+
+class BinaryDistribution(Distribution):
+    """Tell setuptools this package contains platform-specific runtime files."""
+
+    def has_ext_modules(self):
+        return True
 
 
 class PlatformWheel(bdist_wheel):
@@ -22,4 +29,7 @@ class PlatformWheel(bdist_wheel):
         return super().get_tag()
 
 
-setup(cmdclass={"bdist_wheel": PlatformWheel})
+setup(
+    distclass=BinaryDistribution,
+    cmdclass={"bdist_wheel": PlatformWheel},
+)
