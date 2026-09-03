@@ -141,16 +141,31 @@ jobs:
           venv="$RUNNER_TEMP/mip-wrapper-venv"
           runtime="$venv/lib/python3.13/site-packages/mip_wrapper/_runtime/ubuntu-22.04-x64"
           helper="$runtime/MipWrapper.Helper"
-          echo "ldd $helper"
-          ldd "$helper" 2>&1 | tee helper-ldd.txt || true
-          if grep -q 'not found' helper-ldd.txt; then exit 1; fi
+          : > helper-ldd.txt
+          : > so-ldd.txt
+          missing=0
+          check_elf_dependencies() {
+            local binary="$1"
+            local report="$2"
+            local output
+            echo "ldd $binary"
+            # ldd may return nonzero for a valid ELF object. Its output is the
+            # source of truth for unresolved dependencies.
+            output=$(ldd "$binary" 2>&1 || true)
+            printf '%s\n' "$output" | tee -a "$report"
+            if grep -q 'not found' <<<"$output"; then
+              echo "UNRESOLVED DEPENDENCIES: $binary"
+              missing=1
+            fi
+          }
+          check_elf_dependencies "$helper" helper-ldd.txt
           while IFS= read -r library; do
-            echo "ldd $library"
-            # ldd can return nonzero for a valid ELF object; the required
-            # failure signal here is an unresolved dependency.
-            ldd "$library" 2>&1 | tee -a so-ldd.txt || true
+            check_elf_dependencies "$library" so-ldd.txt
           done < <(find "$runtime" -type f -name '*.so' -print)
-          if grep -q 'not found' so-ldd.txt; then exit 1; fi
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more packaged ELF files have unresolved dependencies"
+            exit 1
+          fi
           test -x "$helper"
       - name: Report wheel
         run: |
