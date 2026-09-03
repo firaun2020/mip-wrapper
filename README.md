@@ -13,6 +13,10 @@ Unofficial Python wrapper for inspecting and decrypting files protected by Micro
 
 The published platform wheel bundles a self-contained helper and the target platform's Microsoft MIP SDK runtime. Ubuntu support is specifically Ubuntu 22.04 x64; other Linux distributions and architectures are rejected by runtime discovery.
 
+The Ubuntu wheel omits the optional .NET `libcoreclrtraceptprovider.so` tracing
+component because it requires the legacy `liblttng-ust.so.0` ABI. Authentication,
+MIP initialization, inspection, and decryption do not require LTTng tracing.
+
 ## Installation
 
 ```powershell

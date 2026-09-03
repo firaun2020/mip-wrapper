@@ -42,14 +42,31 @@ jobs:
           dotnet-version: "10.0.x"
       - name: Build Ubuntu wheel
         run: |
+          sudo apt-get update
+          mkdir -p local-debs local-libs
+          cd local-debs
+          apt-get download libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0
+          for deb in *.deb; do dpkg-deb -x "$deb" ../local-libs; done
+          cd ..
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64
           python -m pip install --upgrade build setuptools wheel
           chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
-          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist
+          python -m pip install --upgrade auditwheel
+          mkdir -p runtime/ubuntu-22.04-x64/licenses dist/raw dist/repaired
+          for package in libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0; do
+            copyright=$(find "local-libs/usr/share/doc/$package" -type f -iname copyright -print -quit)
+            test -n "$copyright"
+            cp "$copyright" "runtime/ubuntu-22.04-x64/licenses/${package}-copyright"
+          done
+          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
+          raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          rm -rf dist/raw
       - uses: actions/upload-artifact@v4
         with:
           name: mip-wrapper-ubuntu
-          path: dist/*.whl
+          path: dist/repaired/*.whl
 
   publish:
     needs: [build-windows, build-ubuntu]

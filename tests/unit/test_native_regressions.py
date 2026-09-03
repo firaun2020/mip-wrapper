@@ -80,6 +80,23 @@ def test_commit_result_and_output_are_verified():
     assert '"MIP commit did not create the output file"' in PROGRAM
 
 
+def test_ubuntu_runtime_excludes_optional_lttng_provider(tmp_path):
+    from tools.build_distribution import _copy_runtime
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    (source / "libcoreclrtraceptprovider.so").write_bytes(b"optional")
+    (source / "libcoreclr.so").write_bytes(b"required")
+    (source / "libmip_file_sdk.so").write_bytes(b"required")
+
+    _copy_runtime(source, destination, "ubuntu-22.04-x64")
+
+    assert not (destination / "libcoreclrtraceptprovider.so").exists()
+    assert (destination / "libcoreclr.so").is_file()
+    assert (destination / "libmip_file_sdk.so").is_file()
+
+
 def test_fixed_preflight_scope_was_removed_and_challenge_is_used():
     assert "https://aadrm.com/.default" not in PROGRAM
     assert "tokenRequest.WithClaims(claimsChallenge)" in PROGRAM

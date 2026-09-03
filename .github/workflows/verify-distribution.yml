@@ -67,23 +67,38 @@ jobs:
       - name: Build helper and wheel
         run: |
           set -o pipefail
-          # Microsoft documents these as host dependencies of the Linux MIP
-          # File SDK; they are not included in its Ubuntu NuGet package.
+          # Download, but do not install, the non-system MIP File SDK
+          # dependencies. auditwheel will copy the required ELF objects into
+          # the repaired wheel and preserve the runner's clean OS.
           sudo apt-get update
-          sudo apt-get install -y libgsf-1-114 libgmime-3.0-0 liblttng-ust1
+          mkdir -p local-debs local-libs
+          cd local-debs
+          apt-get download libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0
+          for deb in *.deb; do dpkg-deb -x "$deb" ../local-libs; done
+          cd ..
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64 2>&1 | tee dotnet-publish.log
           echo 'Ubuntu2204 NuGet package contents:'
           find "$HOME/.nuget/packages/microsoft.informationprotection.file.ubuntu2204/1.18.124" -type f -printf '%P\n' | sort
           echo 'NU1701 conclusion: Microsoft.InformationProtection.File.Ubuntu2204 exposes lib/dotnet assets but no net10.0 target; the warning is retained and not suppressed.'
           python -m pip install --upgrade build setuptools wheel
           chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
-          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist
-          wheel=$(find dist -name '*.whl' -print -quit)
-          python tools/verify_wheel.py "$wheel" py3-none-manylinux_2_35_x86_64
+          mkdir -p runtime/ubuntu-22.04-x64/licenses
+          for package in libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0; do
+            copyright=$(find "local-libs/usr/share/doc/$package" -type f -iname copyright -print -quit)
+            test -n "$copyright"
+            cp "$copyright" "runtime/ubuntu-22.04-x64/licenses/${package}-copyright"
+          done
+          mkdir -p dist/raw dist/repaired
+          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
+          raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          repaired_wheel=$(find dist/repaired -name '*.whl' -print -quit)
+          python tools/verify_wheel.py "$repaired_wheel" manylinux
       - name: Clean install and helper smoke test
         run: |
           set -euo pipefail
-          wheel=$(find dist -name '*.whl' -print -quit)
+          wheel=$(find dist/repaired -name '*.whl' -print -quit)
           venv="$RUNNER_TEMP/mip-wrapper-venv"
           python -m venv "$venv"
           python_bin="$venv/bin/python"
@@ -109,18 +124,22 @@ jobs:
           runtime = Path(helper).parent
           for name in ('MIP_Ubuntu2204_MIT_LICENSE.txt', 'MIP_Ubuntu2204_Redistribution.txt', 'microsoft.informationprotection.file.ubuntu2204.nuspec', 'DOTNET_LICENSE.txt', 'DOTNET_ThirdPartyNotices.txt'):
               assert (runtime / name).is_file(), name
+          for name in ('libgsf-1-114-copyright', 'libgmime-3.0-0-copyright', 'libgpgme11-copyright', 'libassuan0-copyright'):
+              assert (runtime / 'licenses' / name).is_file(), name
           for name in ('LicenseTerms.rtf', 'redist.txt', 'ThirdPartyNotice.txt'):
               assert not (runtime / name).exists(), name
+          assert not (runtime / 'libcoreclrtraceptprovider.so').exists()
           print('license files: valid')
 
           process = subprocess.Popen([str(helper)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
           try:
-              process.stdin.write('{}\n')
+              process.stdin.write(json.dumps({'protocol_version': '1.0', 'request_id': 'runtime-check', 'command': 'runtime_check'}) + '\n')
               process.stdin.flush()
               response = json.loads(process.stdout.readline())
               print('helper response:', response)
-              assert response['success'] is False
-              assert response['error']['code'] in {'InvalidRequest', 'UnsupportedProtocolVersion'}
+              assert response['success'] is True
+              assert response['result']['mip_initialized'] is True
+              assert response['result']['sdk_version'] == '1.18.124'
           finally:
               process.terminate()
               process.wait(timeout=10)
@@ -139,7 +158,7 @@ jobs:
       - name: Audit Linux wheel and shared libraries
         run: |
           set -euo pipefail
-          wheel=$(find dist -name '*.whl' -print -quit)
+          wheel=$(find dist/repaired -name '*.whl' -print -quit)
           python -m pip install --upgrade auditwheel
           auditwheel show "$wheel"
           venv="$RUNNER_TEMP/mip-wrapper-venv"

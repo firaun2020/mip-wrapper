@@ -25,7 +25,8 @@ class PlatformWheel(bdist_wheel):
         if target == "win-x64":
             return "py3", "none", "win_amd64"
         if target == "ubuntu-22.04-x64":
-            return "py3", "none", "manylinux_2_35_x86_64"
+            # auditwheel assigns the final manylinux tag after dependency repair.
+            return "py3", "none", "linux_x86_64"
         return super().get_tag()
 
 

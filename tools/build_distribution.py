@@ -59,9 +59,14 @@ def _mip_package_root(package_name: str) -> Path:
 
 def _copy_runtime(runtime_dir: Path, destination: Path, platform_name: str) -> None:
     def ignore(path: str, names: list[str]) -> set[str]:
+        ignored = set()
         if platform_name == "win-x64":
-            return {name for name in names if name in {"x86", "arm64"}}
-        return set()
+            ignored.update(name for name in names if name in {"x86", "arm64"})
+        elif platform_name == "ubuntu-22.04-x64":
+            # This optional .NET tracing provider requires the unavailable
+            # legacy liblttng-ust.so.0 ABI. MIP operations do not use it.
+            ignored.add("libcoreclrtraceptprovider.so")
+        return ignored
 
     shutil.copytree(runtime_dir, destination, ignore=ignore)
 

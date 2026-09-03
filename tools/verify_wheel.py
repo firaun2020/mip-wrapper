@@ -21,9 +21,14 @@ def verify_wheel(wheel_path: Path, expected_tag: str) -> None:
         }
         if fields.get("Root-Is-Purelib") != "false":
             raise AssertionError("Root-Is-Purelib must be false")
-        if fields.get("Tag") != expected_tag:
+        actual_tag = fields.get("Tag", "")
+        if expected_tag == "manylinux":
+            valid_tag = actual_tag.startswith("py3-none-manylinux_")
+        else:
+            valid_tag = actual_tag == expected_tag
+        if not valid_tag:
             raise AssertionError(
-                f"expected Tag: {expected_tag}, got {fields.get('Tag')!r}"
+                f"expected Tag: {expected_tag}, got {actual_tag!r}"
             )
         if not any(name.startswith("mip_wrapper/") for name in names):
             raise AssertionError("wheel does not contain the mip_wrapper package")

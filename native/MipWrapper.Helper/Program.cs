@@ -49,6 +49,7 @@ class MipHelper
 
                 var response = request.Command switch
                 {
+                    "runtime_check" => HandleRuntimeCheck(request),
                     "inspect" => HandleInspect(request),
                     "decrypt" => HandleDecrypt(request),
                     "shutdown" => HandleShutdown(request),
@@ -64,6 +65,44 @@ class MipHelper
             {
                 SendError("UnexpectedError", ex.Message);
             }
+        }
+    }
+
+    private ProtocolResponse HandleRuntimeCheck(ProtocolRequest request)
+    {
+        try
+        {
+            var cacheDir = Path.Combine(Path.GetTempPath(), "mip_runtime_check_cache");
+            Directory.CreateDirectory(cacheDir);
+            var applicationInfo = new ApplicationInfo
+            {
+                ApplicationId = "00000000-0000-0000-0000-000000000001",
+                ApplicationName = "mip-wrapper",
+                ApplicationVersion = "0.2.0"
+            };
+            var mipConfiguration = new Microsoft.InformationProtection.MipConfiguration(
+                applicationInfo,
+                cacheDir,
+                Microsoft.InformationProtection.LogLevel.Error,
+                false,
+                Microsoft.InformationProtection.CacheStorageType.OnDisk);
+
+            DiagnosticLog.Write("before MipContext runtime check");
+            using (var mipContext = Microsoft.InformationProtection.MIP.CreateMipContext(mipConfiguration))
+            {
+                DiagnosticLog.Write("after MipContext runtime check");
+            }
+
+            return CreateSuccessResponse(request, new
+            {
+                mip_initialized = true,
+                sdk_version = "1.18.124",
+                helper_version = "0.2.0"
+            });
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResponse(request, "RuntimeCheckError", ex.Message);
         }
     }
 
