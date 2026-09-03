@@ -67,6 +67,10 @@ jobs:
       - name: Build helper and wheel
         run: |
           set -o pipefail
+          # Microsoft documents these as host dependencies of the Linux MIP
+          # File SDK; they are not included in its Ubuntu NuGet package.
+          sudo apt-get update
+          sudo apt-get install -y libgsf-1-114 libgmime-3.0-0 liblttng-ust1
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64 2>&1 | tee dotnet-publish.log
           echo 'Ubuntu2204 NuGet package contents:'
           find "$HOME/.nuget/packages/microsoft.informationprotection.file.ubuntu2204/1.18.124" -type f -printf '%P\n' | sort
