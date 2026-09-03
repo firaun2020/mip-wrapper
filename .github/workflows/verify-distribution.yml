@@ -53,6 +53,13 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem dist\*.whl | Select-Object Name,Length
+      - name: Upload Windows wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-windows-x64-0.2.0
+          path: dist/mip_wrapper-0.2.0-py3-none-win_amd64.whl
+          if-no-files-found: error
+          retention-days: 14
 
   ubuntu:
     runs-on: ubuntu-22.04
@@ -195,3 +202,10 @@ jobs:
       - name: Report wheel
         run: |
           find dist -name '*.whl' -printf '%f %s bytes\n'
+      - name: Upload Ubuntu wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-ubuntu-2204-x64-0.2.0
+          path: dist/repaired/mip_wrapper-0.2.0-py3-none-manylinux_*.whl
+          if-no-files-found: error
+          retention-days: 14
