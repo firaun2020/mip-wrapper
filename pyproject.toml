@@ -33,6 +33,7 @@ Issues = "https://github.com/firaun2020/mip-wrapper/issues"
 [tool.setuptools]
 packages = ["mip_wrapper", "mip_wrapper.bridge"]
 package-dir = {"" = "src"}
+include-package-data = false
 
 [tool.setuptools.package-data]
 mip_wrapper = ["py.typed", "_runtime/**/*"]

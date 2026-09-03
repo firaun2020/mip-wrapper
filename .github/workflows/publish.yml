@@ -51,7 +51,7 @@ jobs:
           dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64
           python -m pip install --upgrade build setuptools wheel
           chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
-          python -m pip install --upgrade auditwheel
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
           mkdir -p runtime/ubuntu-22.04-x64/licenses dist/raw dist/repaired
           for package in libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0; do
             copyright=$(find "local-libs/usr/share/doc/$package" -type f -iname copyright -print -quit)
@@ -60,8 +60,9 @@ jobs:
           done
           python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
           raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          test "$(basename "$raw_wheel")" = "mip_wrapper-0.2.0-py3-none-linux_x86_64.whl"
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          python -m auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
           rm -rf dist/raw
       - uses: actions/upload-artifact@v4
         with:

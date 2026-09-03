@@ -91,8 +91,10 @@ jobs:
           mkdir -p dist/raw dist/repaired
           python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
           raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          test "$(basename "$raw_wheel")" = "mip_wrapper-0.2.0-py3-none-linux_x86_64.whl"
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          python -m auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
           repaired_wheel=$(find dist/repaired -name '*.whl' -print -quit)
           python tools/verify_wheel.py "$repaired_wheel" manylinux
       - name: Clean install and helper smoke test
@@ -159,8 +161,8 @@ jobs:
         run: |
           set -euo pipefail
           wheel=$(find dist/repaired -name '*.whl' -print -quit)
-          python -m pip install --upgrade auditwheel
-          auditwheel show "$wheel"
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
+          python -m auditwheel show "$wheel"
           venv="$RUNNER_TEMP/mip-wrapper-venv"
           runtime="$venv/lib/python3.13/site-packages/mip_wrapper/_runtime/ubuntu-22.04-x64"
           helper="$runtime/MipWrapper.Helper"
