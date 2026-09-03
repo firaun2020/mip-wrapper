@@ -146,7 +146,9 @@ jobs:
           if grep -q 'not found' helper-ldd.txt; then exit 1; fi
           while IFS= read -r library; do
             echo "ldd $library"
-            ldd "$library" 2>&1 | tee -a so-ldd.txt
+            # ldd can return nonzero for a valid ELF object; the required
+            # failure signal here is an unresolved dependency.
+            ldd "$library" 2>&1 | tee -a so-ldd.txt || true
           done < <(find "$runtime" -type f -name '*.so' -print)
           if grep -q 'not found' so-ldd.txt; then exit 1; fi
           test -x "$helper"
