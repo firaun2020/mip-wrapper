@@ -9,22 +9,74 @@ permissions:
   id-token: write
 
 jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build Windows wheel
+        shell: pwsh
+        run: |
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime win-x64 --self-contained true --output runtime/win-x64
+          python -m pip install --upgrade build setuptools wheel
+          python tools/build_distribution.py --platform win-x64 --runtime-dir runtime/win-x64 --output-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-windows
+          path: dist/*.whl
+
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build Ubuntu wheel
+        run: |
+          sudo apt-get update
+          mkdir -p local-debs local-libs
+          cd local-debs
+          apt-get download libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0
+          for deb in *.deb; do dpkg-deb -x "$deb" ../local-libs; done
+          cd ..
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64
+          python -m pip install --upgrade build setuptools wheel
+          chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
+          mkdir -p runtime/ubuntu-22.04-x64/licenses dist/raw dist/repaired
+          for package in libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0; do
+            copyright=$(find "local-libs/usr/share/doc/$package" -type f -iname copyright -print -quit)
+            test -n "$copyright"
+            cp "$copyright" "runtime/ubuntu-22.04-x64/licenses/${package}-copyright"
+          done
+          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
+          raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          test "$(basename "$raw_wheel")" = "mip_wrapper-0.2.0-py3-none-linux_x86_64.whl"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python -m auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          rm -rf dist/raw
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-ubuntu
+          path: dist/repaired/*.whl
+
   publish:
+    needs: [build-windows, build-ubuntu]
     runs-on: ubuntu-latest
     environment: pypi
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.13"
-
-      - name: Build distributions
-        run: |
-          python -m pip install --upgrade build
-          python -m build
-
-      - name: Publish distributions
-        uses: pypa/gh-action-pypi-publish@release/v1
+          pattern: mip-wrapper-*
+          path: dist
+          merge-multiple: true
+      - uses: pypa/gh-action-pypi-publish@release/v1

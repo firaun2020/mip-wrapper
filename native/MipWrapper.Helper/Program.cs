@@ -49,6 +49,7 @@ class MipHelper
 
                 var response = request.Command switch
                 {
+                    "runtime_check" => HandleRuntimeCheck(request),
                     "inspect" => HandleInspect(request),
                     "decrypt" => HandleDecrypt(request),
                     "shutdown" => HandleShutdown(request),
@@ -64,6 +65,44 @@ class MipHelper
             {
                 SendError("UnexpectedError", ex.Message);
             }
+        }
+    }
+
+    private ProtocolResponse HandleRuntimeCheck(ProtocolRequest request)
+    {
+        try
+        {
+            var cacheDir = Path.Combine(Path.GetTempPath(), "mip_runtime_check_cache");
+            Directory.CreateDirectory(cacheDir);
+            var applicationInfo = new ApplicationInfo
+            {
+                ApplicationId = "00000000-0000-0000-0000-000000000001",
+                ApplicationName = "mip-wrapper",
+                ApplicationVersion = "0.2.0"
+            };
+            var mipConfiguration = new Microsoft.InformationProtection.MipConfiguration(
+                applicationInfo,
+                cacheDir,
+                Microsoft.InformationProtection.LogLevel.Error,
+                false,
+                Microsoft.InformationProtection.CacheStorageType.OnDisk);
+
+            DiagnosticLog.Write("before MipContext runtime check");
+            using (var mipContext = Microsoft.InformationProtection.MIP.CreateMipContext(mipConfiguration))
+            {
+                DiagnosticLog.Write("after MipContext runtime check");
+            }
+
+            return CreateSuccessResponse(request, new
+            {
+                mip_initialized = true,
+                sdk_version = "1.18.124",
+                helper_version = "0.2.0"
+            });
+        }
+        catch (Exception ex)
+        {
+            return CreateErrorResponse(request, "RuntimeCheckError", ex.Message);
         }
     }
 
@@ -83,7 +122,7 @@ class MipHelper
             {
                 ApplicationId = clientId,
                 ApplicationName = "mip-wrapper",
-                ApplicationVersion = "0.1.0"
+                ApplicationVersion = "0.2.0"
             };
 
             var mipConfiguration = new Microsoft.InformationProtection.MipConfiguration(
@@ -112,13 +151,7 @@ class MipHelper
                 DiagnosticLog.Write("after FileProfile loading");
 
         var authDelegate = new MsalAuthDelegate(request.TenantId!, request.ClientId!, request.ClientSecret!, request.TimeoutSeconds);
-                var fileEngineSettings = new Microsoft.InformationProtection.File.FileEngineSettings(
-                    request.DelegatedUser!,
-                    authDelegate,
-                    "",
-                    request.DelegatedUser!);
-                fileEngineSettings.Identity = new Microsoft.InformationProtection.Identity(request.DelegatedUser!);
-                fileEngineSettings.DelegatedUserEmail = request.DelegatedUser!;
+                var fileEngineSettings = CreateFileEngineSettings(request, authDelegate);
 
                 DiagnosticLog.Write("before FileEngine creation");
                 var fileEngine = fileProfile
@@ -153,9 +186,7 @@ class MipHelper
                     file_format = Path.GetExtension(request.SourcePath!).TrimStart('.').ToLower(),
                     protection_type = protection != null ? "azure_rms" : "none",
                     usage_rights = rights,
-                    can_decrypt = protection != null &&
-                        (protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Export) ||
-                         protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Owner)),
+                    can_decrypt = CanDecrypt(request, protection),
                     sdk_version = "1.18.124",
                     helper_version = "1.0.0"
                 };
@@ -195,7 +226,7 @@ class MipHelper
             {
                 ApplicationId = clientId,
                 ApplicationName = "mip-wrapper",
-                ApplicationVersion = "0.1.0"
+                ApplicationVersion = "0.2.0"
             };
 
             var mipConfiguration = new Microsoft.InformationProtection.MipConfiguration(
@@ -224,13 +255,7 @@ class MipHelper
                 DiagnosticLog.Write("after FileProfile loading");
 
                 var authDelegate = new MsalAuthDelegate(request.TenantId!, request.ClientId!, request.ClientSecret!, request.TimeoutSeconds);
-                var fileEngineSettings = new Microsoft.InformationProtection.File.FileEngineSettings(
-                    request.DelegatedUser!,
-                    authDelegate,
-                    "",
-                    request.DelegatedUser!);
-                fileEngineSettings.Identity = new Microsoft.InformationProtection.Identity(request.DelegatedUser!);
-                fileEngineSettings.DelegatedUserEmail = request.DelegatedUser!;
+                var fileEngineSettings = CreateFileEngineSettings(request, authDelegate);
 
                 DiagnosticLog.Write("before FileEngine creation");
                 var fileEngine = fileProfile
@@ -258,7 +283,7 @@ class MipHelper
                 DiagnosticLog.Write("after FileHandler creation");
 
                 var protection = handler.Protection;
-                if (protection != null)
+                if (request.AuthorizationMode == "delegated_reader" && protection != null)
                 {
                     if (!protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Export) &&
                         !protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Owner))
@@ -304,8 +329,8 @@ class MipHelper
         request.TenantId = request.TenantId?.Trim();
         request.ClientId = request.ClientId?.Trim();
 
-        if (request.AuthorizationMode != "delegated_reader")
-            return CreateErrorResponse(request, "ConfigurationError", "Only delegated_reader authorization mode is supported");
+        if (request.AuthorizationMode != "delegated_reader" && request.AuthorizationMode != "super_user")
+            return CreateErrorResponse(request, "ConfigurationError", "Only delegated_reader and super_user authorization modes are supported");
         if (string.IsNullOrEmpty(request.SourcePath))
             return CreateErrorResponse(request, "ConfigurationError", "source_path is required");
         if (!File.Exists(request.SourcePath))
@@ -316,11 +341,46 @@ class MipHelper
             return CreateErrorResponse(request, "InvalidConfiguration", "client_id must be a valid GUID");
         if (string.IsNullOrEmpty(request.TenantId))
             return CreateErrorResponse(request, "ConfigurationError", "tenant_id is required");
-        if (string.IsNullOrEmpty(request.DelegatedUser))
+        if (request.AuthorizationMode == "delegated_reader" && string.IsNullOrEmpty(request.DelegatedUser))
             return CreateErrorResponse(request, "ConfigurationError", "delegated_user is required");
         if (string.IsNullOrEmpty(request.ClientSecret))
             return CreateErrorResponse(request, "ConfigurationError", "client_secret is required");
         return null;
+    }
+
+    private Microsoft.InformationProtection.File.FileEngineSettings CreateFileEngineSettings(
+        ProtocolRequest request,
+        MsalAuthDelegate authDelegate)
+    {
+        var isDelegated = request.AuthorizationMode == "delegated_reader";
+        var engineId = isDelegated ? request.DelegatedUser! : request.ClientId!;
+        var identity = isDelegated ? request.DelegatedUser! : request.ClientId!;
+        var settings = new Microsoft.InformationProtection.File.FileEngineSettings(
+            engineId,
+            authDelegate,
+            "",
+            "en-US")
+        {
+            Identity = new Microsoft.InformationProtection.Identity(identity)
+        };
+
+        if (isDelegated)
+            settings.DelegatedUserEmail = request.DelegatedUser!;
+
+        return settings;
+    }
+
+    private bool CanDecrypt(
+        ProtocolRequest request,
+        Microsoft.InformationProtection.Protection.IProtectionHandler? protection)
+    {
+        if (protection == null)
+            return false;
+        if (request.AuthorizationMode == "super_user")
+            return true;
+
+        return protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Export) ||
+            protection.Rights.Contains(Microsoft.InformationProtection.Protection.Rights.Owner);
     }
 
     private bool PathEquals(string sourcePath, string outputPath)

@@ -12,12 +12,26 @@ PROGRAM = (
 
 
 def test_delegated_reader_is_the_only_supported_mode():
-    assert 'request.AuthorizationMode != "delegated_reader"' in PROGRAM
+    assert 'request.AuthorizationMode != "delegated_reader" && request.AuthorizationMode != "super_user"' in PROGRAM
 
 
 def test_engine_identity_and_delegated_email_are_explicit():
-    assert "new Microsoft.InformationProtection.Identity(request.DelegatedUser!)" in PROGRAM
-    assert "fileEngineSettings.DelegatedUserEmail = request.DelegatedUser!" in PROGRAM
+    assert 'var engineId = isDelegated ? request.DelegatedUser! : request.ClientId!;' in PROGRAM
+    assert 'var identity = isDelegated ? request.DelegatedUser! : request.ClientId!;' in PROGRAM
+    assert "Identity = new Microsoft.InformationProtection.Identity(identity)" in PROGRAM
+    assert "settings.DelegatedUserEmail = request.DelegatedUser!;" in PROGRAM
+    assert 'if (isDelegated)' in PROGRAM
+
+
+def test_super_user_engine_uses_service_principal_identity_without_delegation():
+    assert 'var engineId = isDelegated ? request.DelegatedUser! : request.ClientId!;' in PROGRAM
+    assert 'var identity = isDelegated ? request.DelegatedUser! : request.ClientId!;' in PROGRAM
+    assert 'new Microsoft.InformationProtection.File.FileEngineSettings(\n            engineId,\n            authDelegate,\n            "",\n            "en-US")' in PROGRAM
+    assert 'if (request.AuthorizationMode == "delegated_reader" && protection != null)' in PROGRAM
+
+
+def test_super_user_capability_does_not_depend_on_document_rights():
+    assert 'if (request.AuthorizationMode == "super_user")\n            return true;' in PROGRAM
 
 
 def test_application_id_preserves_the_client_guid():
@@ -30,7 +44,7 @@ def test_application_id_preserves_the_client_guid():
     assert "var clientId = request.ClientId!;" in PROGRAM
     assert "ApplicationId = clientId" in PROGRAM
     assert 'ApplicationName = "mip-wrapper"' in PROGRAM
-    assert 'ApplicationVersion = "0.1.0"' in PROGRAM
+    assert 'ApplicationVersion = "0.2.0"' in PROGRAM
 
 
 def test_client_id_is_trimmed_and_validated_before_mip_initialization():
@@ -64,6 +78,23 @@ def test_commit_result_and_output_are_verified():
     assert "var commitSucceeded = handler.CommitAsync(request.OutputPath!).GetAwaiter().GetResult();" in PROGRAM
     assert "if (!commitSucceeded)" in PROGRAM
     assert '"MIP commit did not create the output file"' in PROGRAM
+
+
+def test_ubuntu_runtime_excludes_optional_lttng_provider(tmp_path):
+    from tools.build_distribution import _copy_runtime
+
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    (source / "libcoreclrtraceptprovider.so").write_bytes(b"optional")
+    (source / "libcoreclr.so").write_bytes(b"required")
+    (source / "libmip_file_sdk.so").write_bytes(b"required")
+
+    _copy_runtime(source, destination, "ubuntu-22.04-x64")
+
+    assert not (destination / "libcoreclrtraceptprovider.so").exists()
+    assert (destination / "libcoreclr.so").is_file()
+    assert (destination / "libmip_file_sdk.so").is_file()
 
 
 def test_fixed_preflight_scope_was_removed_and_challenge_is_used():

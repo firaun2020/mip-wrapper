@@ -4,7 +4,9 @@ import logging
 import os
 import shutil
 import tempfile
+import platform
 from contextlib import contextmanager
+from importlib import resources
 from pathlib import Path
 from typing import Generator
 
@@ -18,6 +20,22 @@ from mip_wrapper.exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _read_os_release() -> dict[str, str]:
+    """Read Linux distribution metadata used by packaged-runtime discovery."""
+    os_release = Path("/etc/os-release")
+    values: dict[str, str] = {}
+    if os_release.exists():
+        for line in os_release.read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value.strip().strip('"')
+    return values
+
+
+def _is_executable(path: Path) -> bool:
+    return bool(path.stat().st_mode & 0o111)
 
 
 class MipClient:
@@ -45,7 +63,7 @@ class MipClient:
         """
         auth.validate()
 
-        if authorization_mode != "delegated_reader":
+        if authorization_mode not in {"delegated_reader", "super_user"}:
             raise InvalidConfigurationError(
                 f"Invalid authorization_mode: {authorization_mode}",
                 error_code="InvalidAuthMode",
@@ -59,7 +77,7 @@ class MipClient:
 
         self.auth = auth
         self.authorization_mode = authorization_mode
-        self.delegated_user = delegated_user
+        self.delegated_user = delegated_user if authorization_mode == "delegated_reader" else None
         self.correlation_id = correlation_id or ""
         self.timeout_seconds = timeout_seconds
 
@@ -100,12 +118,21 @@ class MipClient:
         env_path = os.environ.get("MIP_WRAPPER_HELPER_PATH")
         if env_path:
             path = Path(env_path)
-            if path.exists():
+            if path.is_file():
                 logger.debug(f"Found helper via MIP_WRAPPER_HELPER_PATH: {path}")
                 return path
-            logger.warning(f"MIP_WRAPPER_HELPER_PATH set but file not found: {env_path}")
+            raise MissingRuntimeError(
+                "MIP_WRAPPER_HELPER_PATH points to a missing helper: "
+                f"{env_path}",
+                error_code="HelperNotFound",
+            )
 
-        # 2. Try common locations
+        # 2. Prefer the helper bundled in a platform-specific wheel.
+        packaged_helper = self._find_packaged_helper()
+        if packaged_helper is not None:
+            return packaged_helper
+
+        # 3. Try development-only repository locations.
         candidates = [
             Path.cwd() / "MipWrapper.Helper",
             Path.cwd() / "MipWrapper.Helper.exe",
@@ -120,7 +147,7 @@ class MipClient:
                 logger.debug(f"Found helper at: {candidate}")
                 return candidate
 
-        # 3. Provide clear error with instructions
+        # 4. Provide clear error with instructions
         raise MissingRuntimeError(
             "MipWrapper.Helper executable not found. "
             "\n\nTo use mip_wrapper, you must:\n"
@@ -134,6 +161,74 @@ class MipClient:
             "\nSee BUILD_LOCALLY.md for detailed instructions.",
             error_code="HelperNotFound",
         )
+
+    def _find_packaged_helper(self) -> Path | None:
+        """Resolve the helper bundled in a platform-specific wheel."""
+        if platform.system() == "Windows":
+            runtime_name = "win-x64"
+            helper_name = "MipWrapper.Helper.exe"
+        elif platform.system() == "Linux":
+            if platform.machine().lower() not in {"x86_64", "amd64"}:
+                raise MissingRuntimeError(
+                    "mip-wrapper supports only Ubuntu 22.04 x64 on Linux",
+                    error_code="UnsupportedPlatform",
+                )
+
+            values = _read_os_release()
+            if values.get("ID") != "ubuntu" or values.get("VERSION_ID") != "22.04":
+                raise MissingRuntimeError(
+                    "mip-wrapper supports only Ubuntu 22.04 x64 on Linux",
+                    error_code="UnsupportedPlatform",
+                )
+            runtime_name = "ubuntu-22.04-x64"
+            helper_name = "MipWrapper.Helper"
+        else:
+            raise MissingRuntimeError(
+                f"mip-wrapper does not support {platform.system()}",
+                error_code="UnsupportedPlatform",
+            )
+
+        runtime_root = resources.files("mip_wrapper").joinpath(
+            "_runtime", runtime_name
+        )
+        if not runtime_root.is_dir():
+            return None
+
+        try:
+            root_path = Path(runtime_root)
+        except TypeError as error:
+            raise MissingRuntimeError(
+                "Packaged helper resources are not available as filesystem paths",
+                error_code="IncompleteRuntime",
+            ) from error
+
+        helper_path = root_path / helper_name
+        if not helper_path.is_file():
+            raise MissingRuntimeError(
+                f"Packaged helper is incomplete: {helper_name} is missing",
+                error_code="IncompleteRuntime",
+            )
+
+        native_suffix = ".dll" if runtime_name == "win-x64" else ".so"
+        native_files = list(root_path.rglob(f"*{native_suffix}"))
+        if not any("mip_file_sdk" in path.name.lower() for path in native_files):
+            raise MissingRuntimeError(
+                "Packaged MIP native runtime is incomplete",
+                error_code="IncompleteRuntime",
+            )
+        if not (root_path / "Microsoft.InformationProtection.dll").is_file():
+            raise MissingRuntimeError(
+                "Packaged MIP managed assembly is missing",
+                error_code="IncompleteRuntime",
+            )
+
+        if runtime_name != "win-x64" and not _is_executable(helper_path):
+            raise MissingRuntimeError(
+                "Packaged Ubuntu helper is not executable",
+                error_code="IncompleteRuntime",
+            )
+
+        return helper_path
 
     def inspect(self, source_path: str) -> FileInfo:
         """

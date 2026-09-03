@@ -54,6 +54,20 @@ class TestProtocolRequest:
         assert data["output_path"] == "/tmp/output.xlsx"
         assert data["timeout_seconds"] == 60
 
+    def test_super_user_request_preserves_mode_without_delegated_user(self):
+        request = ProtocolRequest(
+            command="inspect",
+            tenant_id="tenant123",
+            client_id="client123",
+            authorization_mode="super_user",
+            source_path="/path/to/file.xlsx",
+        )
+
+        data = json.loads(request.to_json())
+
+        assert data["authorization_mode"] == "super_user"
+        assert "delegated_user" not in data
+
     def test_request_has_protocol_version(self):
         """Test request includes protocol version."""
         request = ProtocolRequest(command="inspect")

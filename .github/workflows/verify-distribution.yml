@@ -1,0 +1,211 @@
+name: Verify Distribution
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build helper and wheel
+        shell: pwsh
+        run: |
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime win-x64 --self-contained true --output runtime/win-x64
+          python -m pip install --upgrade build setuptools wheel
+          python tools/build_distribution.py --platform win-x64 --runtime-dir runtime/win-x64 --output-dir dist
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          python tools\verify_wheel.py $wheel py3-none-win_amd64
+      - name: Clean install and protocol smoke test
+        shell: pwsh
+        run: |
+          $wheel = (Get-ChildItem dist\*.whl | Select-Object -First 1).FullName
+          $venv = Join-Path $env:RUNNER_TEMP "mip-wrapper-venv"
+          python -m venv $venv
+          $python = Join-Path $venv "Scripts\python.exe"
+          & $python -m pip install $wheel
+          & $python -m pip install pytest
+          Push-Location $env:RUNNER_TEMP
+          try {
+            $env:MIP_WRAPPER_EXPECT_PACKAGED_RUNTIME = "1"
+            & $python -c "import mip_wrapper; print('version=', mip_wrapper.__version__); from mip_wrapper import MipClient; c=object.__new__(MipClient); print('helper=', c._find_packaged_helper())"
+            & $python -c "from importlib import resources; from mip_wrapper import MipClient; r=resources.files('mip_wrapper').joinpath('_runtime','win-x64'); names=('LicenseTerms.rtf','redist.txt','ThirdPartyNotice.txt','Microsoft.InformationProtection.File.nuspec','DOTNET_LICENSE.txt','DOTNET_ThirdPartyNotices.txt'); assert all(r.joinpath(n).is_file() for n in names); print('license files: valid')"
+            $helper = & $python -c "from mip_wrapper import MipClient; print(object.__new__(MipClient)._find_packaged_helper())"
+            Write-Host "installed helper path: $helper"
+            Get-FileHash $helper -Algorithm SHA256
+            & $python -c "import json,subprocess; from mip_wrapper import MipClient; helper=object.__new__(MipClient)._find_packaged_helper(); process=subprocess.Popen([str(helper)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); process.stdin.write('{}\n'); process.stdin.flush(); response=json.loads(process.stdout.readline()); print('helper response:', response); assert response['success'] is False; assert response['error']['code'] in {'InvalidRequest', 'UnsupportedProtocolVersion'}; process.terminate(); process.wait(timeout=10)"
+            & $python -m pip check
+            & $python -m pytest "$env:GITHUB_WORKSPACE\tests"
+          } finally {
+            Pop-Location
+          }
+      - name: Report wheel
+        shell: pwsh
+        run: |
+          Get-ChildItem dist\*.whl | Select-Object Name,Length
+      - name: Upload Windows wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-windows-x64-0.2.0
+          path: dist/mip_wrapper-0.2.0-py3-none-win_amd64.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  ubuntu:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build helper and wheel
+        run: |
+          set -o pipefail
+          # Download, but do not install, the non-system MIP File SDK
+          # dependencies. auditwheel will copy the required ELF objects into
+          # the repaired wheel and preserve the runner's clean OS.
+          sudo apt-get update
+          mkdir -p local-debs local-libs
+          cd local-debs
+          apt-get download libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0
+          for deb in *.deb; do dpkg-deb -x "$deb" ../local-libs; done
+          cd ..
+          dotnet publish native/MipWrapper.Helper/MipWrapper.Helper.csproj --configuration Release --runtime linux-x64 --self-contained true --output runtime/ubuntu-22.04-x64 2>&1 | tee dotnet-publish.log
+          echo 'Ubuntu2204 NuGet package contents:'
+          find "$HOME/.nuget/packages/microsoft.informationprotection.file.ubuntu2204/1.18.124" -type f -printf '%P\n' | sort
+          echo 'NU1701 conclusion: Microsoft.InformationProtection.File.Ubuntu2204 exposes lib/dotnet assets but no net10.0 target; the warning is retained and not suppressed.'
+          python -m pip install --upgrade build setuptools wheel
+          chmod +x runtime/ubuntu-22.04-x64/MipWrapper.Helper
+          mkdir -p runtime/ubuntu-22.04-x64/licenses
+          for package in libgsf-1-114 libgmime-3.0-0 libgpgme11 libassuan0; do
+            copyright=$(find "local-libs/usr/share/doc/$package" -type f -iname copyright -print -quit)
+            test -n "$copyright"
+            cp "$copyright" "runtime/ubuntu-22.04-x64/licenses/${package}-copyright"
+          done
+          mkdir -p dist/raw dist/repaired
+          python tools/build_distribution.py --platform ubuntu-22.04-x64 --runtime-dir runtime/ubuntu-22.04-x64 --output-dir dist/raw
+          raw_wheel=$(find dist/raw -name '*.whl' -print -quit)
+          test "$(basename "$raw_wheel")" = "mip_wrapper-0.2.0-py3-none-linux_x86_64.whl"
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/local-libs/usr/lib/x86_64-linux-gnu${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python -m auditwheel repair "$raw_wheel" --wheel-dir dist/repaired
+          repaired_wheel=$(find dist/repaired -name '*.whl' -print -quit)
+          python tools/verify_wheel.py "$repaired_wheel" manylinux
+      - name: Clean install and helper smoke test
+        run: |
+          set -euo pipefail
+          wheel=$(find dist/repaired -name '*.whl' -print -quit)
+          venv="$RUNNER_TEMP/mip-wrapper-venv"
+          python -m venv "$venv"
+          python_bin="$venv/bin/python"
+          "$python_bin" -m pip install "$wheel"
+          "$python_bin" -m pip install pytest
+          export MIP_WRAPPER_EXPECT_PACKAGED_RUNTIME=1
+          cd "$RUNNER_TEMP"
+          "$python_bin" - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+          from unittest.mock import patch
+          import mip_wrapper
+          from mip_wrapper import MipClient, MissingRuntimeError
+
+          print('version=', mip_wrapper.__version__)
+          client = object.__new__(MipClient)
+          helper = client._find_packaged_helper()
+          print('helper=', helper)
+          assert Path(helper).is_file()
+          assert os.access(helper, os.X_OK)
+          runtime = Path(helper).parent
+          for name in ('MIP_Ubuntu2204_MIT_LICENSE.txt', 'MIP_Ubuntu2204_Redistribution.txt', 'microsoft.informationprotection.file.ubuntu2204.nuspec', 'DOTNET_LICENSE.txt', 'DOTNET_ThirdPartyNotices.txt'):
+              assert (runtime / name).is_file(), name
+          for name in ('libgsf-1-114-copyright', 'libgmime-3.0-0-copyright', 'libgpgme11-copyright', 'libassuan0-copyright'):
+              assert (runtime / 'licenses' / name).is_file(), name
+          for name in ('LicenseTerms.rtf', 'redist.txt', 'ThirdPartyNotice.txt'):
+              assert not (runtime / name).exists(), name
+          assert not (runtime / 'libcoreclrtraceptprovider.so').exists()
+          print('license files: valid')
+
+          process = subprocess.Popen([str(helper)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+          try:
+              process.stdin.write(json.dumps({'protocol_version': '1.0', 'request_id': 'runtime-check', 'command': 'runtime_check'}) + '\n')
+              process.stdin.flush()
+              response = json.loads(process.stdout.readline())
+              print('helper response:', response)
+              assert response['success'] is True
+              assert response['result']['mip_initialized'] is True
+              assert response['result']['sdk_version'] == '1.18.124'
+          finally:
+              process.terminate()
+              process.wait(timeout=10)
+
+          with patch('mip_wrapper.client.platform.system', return_value='Linux'), patch('mip_wrapper.client.platform.machine', return_value='x86_64'), patch.object(Path, 'exists', return_value=True), patch.object(Path, 'read_text', return_value='ID=mariner\nVERSION_ID="2.0"\n'):
+              try:
+                  client._find_packaged_helper()
+              except MissingRuntimeError as error:
+                  assert error.error_code == 'UnsupportedPlatform'
+                  print('mariner guard: rejected')
+              else:
+                  raise AssertionError('Mariner was accepted')
+          PY
+          "$python_bin" -m pip check
+          "$python_bin" -m pytest "$GITHUB_WORKSPACE/tests"
+      - name: Audit Linux wheel and shared libraries
+        run: |
+          set -euo pipefail
+          wheel=$(find dist/repaired -name '*.whl' -print -quit)
+          python -m pip install "auditwheel==6.8.2" "patchelf==0.17.2.4"
+          python -m auditwheel show "$wheel"
+          venv="$RUNNER_TEMP/mip-wrapper-venv"
+          runtime="$venv/lib/python3.13/site-packages/mip_wrapper/_runtime/ubuntu-22.04-x64"
+          helper="$runtime/MipWrapper.Helper"
+          : > helper-ldd.txt
+          : > so-ldd.txt
+          missing=0
+          check_elf_dependencies() {
+            local binary="$1"
+            local report="$2"
+            local output
+            echo "ldd $binary"
+            # ldd may return nonzero for a valid ELF object. Its output is the
+            # source of truth for unresolved dependencies.
+            output=$(ldd "$binary" 2>&1 || true)
+            printf '%s\n' "$output" | tee -a "$report"
+            if grep -q 'not found' <<<"$output"; then
+              echo "UNRESOLVED DEPENDENCIES: $binary"
+              missing=1
+            fi
+          }
+          check_elf_dependencies "$helper" helper-ldd.txt
+          while IFS= read -r library; do
+            check_elf_dependencies "$library" so-ldd.txt
+          done < <(find "$runtime" -type f -name '*.so' -print)
+          if [ "$missing" -ne 0 ]; then
+            echo "One or more packaged ELF files have unresolved dependencies"
+            exit 1
+          fi
+          test -x "$helper"
+      - name: Report wheel
+        run: |
+          find dist -name '*.whl' -printf '%f %s bytes\n'
+      - name: Upload Ubuntu wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: mip-wrapper-ubuntu-2204-x64-0.2.0
+          path: dist/repaired/mip_wrapper-0.2.0-py3-none-manylinux_*.whl
+          if-no-files-found: error
+          retention-days: 14

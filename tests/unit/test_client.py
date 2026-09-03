@@ -36,6 +36,27 @@ class TestMipClientInitialization:
         assert client.authorization_mode == "delegated_reader"
         assert client.delegated_user == "user@example.com"
 
+    def test_super_user_does_not_require_or_retain_delegated_user(self, test_auth, mock_helper_path):
+        client = MipClient(
+            auth=test_auth,
+            authorization_mode="super_user",
+            delegated_user=None,
+            helper_path=str(mock_helper_path),
+        )
+
+        assert client.authorization_mode == "super_user"
+        assert client.delegated_user is None
+
+    def test_super_user_does_not_use_supplied_delegated_user(self, test_auth, mock_helper_path):
+        client = MipClient(
+            auth=test_auth,
+            authorization_mode="super_user",
+            delegated_user="must-not-be-used@example.com",
+            helper_path=str(mock_helper_path),
+        )
+
+        assert client.delegated_user is None
+
     def test_invalid_authorization_mode(self, test_auth, mock_helper_path):
         """Test invalid authorization_mode is rejected."""
         with pytest.raises(InvalidConfigurationError, match="Invalid authorization_mode"):
